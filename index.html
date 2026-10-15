@@ -77,6 +77,12 @@
     .chat-input-box { display: flex; gap: 8px; padding: 10px 12px; background: white; }
     .chat-input { flex-grow: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 20px; font-size: 14px; outline: none; margin-bottom: 0; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
     .send-btn { background-color: #FEE500; color: #3C1E1E; border: none; padding: 0 16px; border-radius: 18px; font-size: 14px; cursor: pointer; }
+    .plus-btn { background-color: #f0f0f0; color: #3C1E1E; border: none; width: 36px; height: 36px; min-width: 36px; border-radius: 50%; font-size: 20px; line-height: 1; cursor: pointer; flex-shrink: 0; display:flex; align-items:center; justify-content:center; }
+    .plus-btn:hover { background-color: #e2e2e2; }
+    .plus-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .message-bubble.image-bubble { padding: 4px; background: transparent !important; }
+    .message-bubble.image-bubble img { display: block; max-width: 190px; max-height: 260px; border-radius: 12px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -113,10 +119,16 @@
       <div class="chat-messages" id="chat-box"></div>
 
       <div class="chat-input-box">
+        <input type="file" id="image-input" accept="image/*" style="display:none" onchange="handleImageSelect(event)">
+        <button class="plus-btn" id="plus-btn" onclick="document.getElementById('image-input').click()">+</button>
         <input type="text" class="chat-input" id="message-to-send" placeholder="메시지를 입력하세요..." onkeypress="handleKeyPress(event)">
         <button class="send-btn" onclick="sendMessage()">전송</button>
       </div>
     </div>
+  </div>
+
+  <div id="image-viewer" onclick="closeImageViewer()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:500; align-items:center; justify-content:center; padding:20px;">
+    <img id="image-viewer-img" src="" style="max-width:100%; max-height:100%; border-radius:8px;">
   </div>
 
   <div id="debug-banner" style="display:none; position:fixed; bottom:0; left:0; right:0; max-height:40%; overflow-y:auto; background:#c62828; color:white; font-size:12px; font-family:monospace; padding:10px 12px; z-index:9999; white-space:pre-wrap; word-break:break-all;"></div>
@@ -340,7 +352,7 @@
         if (globalMessages.length > 0) {
           const latest = globalMessages[globalMessages.length - 1];
           if (latest.id !== lastMsgId && latest.sender !== myName && (latest.roomId || 'global') === currentRoomId) {
-            triggerNotify(latest.sender, latest.message);
+            triggerNotify(latest.sender, latest.msgType === 'image' ? '사진을 보냈습니다.' : latest.message);
           }
           lastMsgId = latest.id;
         }
@@ -353,8 +365,12 @@
       const input = document.getElementById('message-to-send');
       const text = input.value.trim();
       if (!text) return;
-      input.value = ""; 
+      input.value = "";
+      pushMessage('text', text);
+    }
 
+    // 공통 전송 로직: type은 'text' 또는 'image', content는 텍스트 또는 base64 이미지(dataURL)
+    function pushMessage(type, content) {
       fetch(`${REQ_URL}/latest`, {
         method: 'GET',
         headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
@@ -363,12 +379,13 @@
       .then(data => {
         let serverData = data || {};
         if (!serverData.messages) serverData.messages = [];
-        
+
         serverData.messages.push({
           id: 'chat_' + Date.now(),
           roomId: currentRoomId,
           sender: myName,
-          message: text,
+          message: content,
+          msgType: type,
           time: Date.now()
         });
 
@@ -380,7 +397,59 @@
           body: JSON.stringify(serverData)
         });
       })
-      .then(() => loadMessages());
+      .then(res => {
+        if (!res.ok) throw new Error(`전송 실패 (status ${res.status})`);
+        loadMessages();
+      })
+      .catch(err => {
+        console.error(err);
+        alert("메시지 전송에 실패했습니다.\n원인: " + err.message);
+      });
+    }
+
+    // 사진 선택 시: 리사이즈 + 압축 후 base64로 전송
+    function handleImageSelect(event) {
+      const file = event.target.files[0];
+      event.target.value = ""; // 같은 사진 다시 선택 가능하도록 초기화
+      if (!file) return;
+
+      const plusBtn = document.getElementById('plus-btn');
+      plusBtn.disabled = true;
+      plusBtn.innerText = "…";
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const MAX_DIM = 720;
+          let w = img.width, h = img.height;
+          if (w > h && w > MAX_DIM) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
+          else if (h >= w && h > MAX_DIM) { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+
+          pushMessage('image', dataUrl);
+          plusBtn.disabled = false;
+          plusBtn.innerText = "+";
+        };
+        img.onerror = function() {
+          alert("이미지를 불러오지 못했습니다.");
+          plusBtn.disabled = false;
+          plusBtn.innerText = "+";
+        };
+        img.src = e.target.result;
+      };
+      reader.onerror = function() {
+        alert("파일을 읽지 못했습니다.");
+        plusBtn.disabled = false;
+        plusBtn.innerText = "+";
+      };
+      reader.readAsDataURL(file);
     }
 
     function deleteChatMessage(chatId) {
@@ -404,6 +473,18 @@
       .then(() => loadMessages());
     }
 
+    function openImageViewer(msgId) {
+      const msg = globalMessages.find(m => m.id === msgId);
+      if (!msg) return;
+      document.getElementById('image-viewer-img').src = msg.message;
+      const viewer = document.getElementById('image-viewer');
+      viewer.style.display = 'flex';
+    }
+
+    function closeImageViewer() {
+      document.getElementById('image-viewer').style.display = 'none';
+    }
+
     function updateMessagesView() {
       const box = document.getElementById('chat-box');
       const isAtBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 50;
@@ -425,12 +506,17 @@
           ? `<button class="msg-delete-btn" onclick="deleteChatMessage('${msg.id}')">×</button>` 
           : '';
 
+        const isImage = msg.msgType === 'image';
+        const bodyHTML = isImage
+          ? `<img src="${msg.message}" alt="사진" onclick="openImageViewer('${msg.id}')">`
+          : `<div>${msg.message}</div>`;
+
         wrapper.innerHTML = `
           ${!isMyMessage ? `<div class="message-sender">${msg.sender}</div>` : ''}
           <div class="bubble-row">
-            <div class="message-bubble">
+            <div class="message-bubble${isImage ? ' image-bubble' : ''}">
               ${deleteBtnHTML}
-              <div>${msg.message}</div>
+              ${bodyHTML}
             </div>
             <div class="msg-time">${formatTime(msg.time)}</div>
           </div>
