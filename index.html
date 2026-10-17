@@ -71,7 +71,7 @@
     .msg-wrapper.other .message-bubble { background: #FFFFFF; color: #1e1e1e; border-top-left-radius: 2px; }
     .msg-wrapper.me .message-bubble { background: #FEE500; color: #1e1e1e; border-top-right-radius: 2px; }
 
-    .msg-time { font-size: 10px; color: #666; white-space: nowrap; }
+    .msg-time { font-size: 9px; color: #666; white-space: nowrap; line-height: 1.3; align-self: flex-end; }
     .msg-delete-btn { position: absolute; top: -6px; right: -6px; background: #e53935; color: white; border: none; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; cursor: pointer; line-height: 18px; text-align: center; }
 
     .chat-input-box { display: flex; gap: 8px; padding: 10px 12px; background: white; }
@@ -337,6 +337,11 @@
       return `${ampm} ${hours}:${minutes}`;
     }
 
+    function formatDate(timestamp) {
+      const date = new Date(timestamp || Date.now());
+      return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`;
+    }
+
     let globalMessages = []; 
 
     function loadMessages() {
@@ -369,6 +374,23 @@
       pushMessage('text', text);
     }
 
+    // jsonbin 무료 플랜은 bin당 100KB 제한 -> 안전 마진을 두고, 넘으면 오래된 사진부터 비움
+    function enforceSizeLimit(serverData) {
+      const LIMIT = 85 * 1024; // 85KB 안전선
+      let json = JSON.stringify(serverData);
+      if (json.length <= LIMIT) return serverData;
+
+      for (let i = 0; i < serverData.messages.length; i++) {
+        if (serverData.messages[i].msgType === 'image') {
+          serverData.messages[i].message = '';
+          serverData.messages[i].msgType = 'image-expired';
+          json = JSON.stringify(serverData);
+          if (json.length <= LIMIT) break;
+        }
+      }
+      return serverData;
+    }
+
     // 공통 전송 로직: type은 'text' 또는 'image', content는 텍스트 또는 base64 이미지(dataURL)
     function pushMessage(type, content) {
       fetch(`${REQ_URL}/latest`, {
@@ -390,6 +412,7 @@
         });
 
         if (serverData.messages.length > 100) serverData.messages = serverData.messages.slice(-100);
+        serverData = enforceSizeLimit(serverData);
 
         return fetch(REQ_URL, {
           method: 'PUT',
@@ -421,7 +444,7 @@
       reader.onload = function(e) {
         const img = new Image();
         img.onload = function() {
-          const MAX_DIM = 720;
+          const MAX_DIM = 480;
           let w = img.width, h = img.height;
           if (w > h && w > MAX_DIM) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
           else if (h >= w && h > MAX_DIM) { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
@@ -431,7 +454,7 @@
           canvas.height = h;
           canvas.getContext('2d').drawImage(img, 0, 0, w, h);
 
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.45);
 
           pushMessage('image', dataUrl);
           plusBtn.disabled = false;
@@ -507,8 +530,11 @@
           : '';
 
         const isImage = msg.msgType === 'image';
+        const isExpiredImage = msg.msgType === 'image-expired';
         const bodyHTML = isImage
           ? `<img src="${msg.message}" alt="사진" onclick="openImageViewer('${msg.id}')">`
+          : isExpiredImage
+          ? `<div style="color:#999; font-style:italic;">[공간 확보를 위해 삭제된 사진]</div>`
           : `<div>${msg.message}</div>`;
 
         wrapper.innerHTML = `
@@ -518,7 +544,7 @@
               ${deleteBtnHTML}
               ${bodyHTML}
             </div>
-            <div class="msg-time">${formatTime(msg.time)}</div>
+            <div class="msg-time">${formatDate(msg.time)} ${formatTime(msg.time)}</div>
           </div>
         `;
 
