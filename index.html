@@ -6,6 +6,7 @@
   <title>깨톡 - 스마트 단톡방</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Jua', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
     body { background-color: #e5e5e5; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #1e1e1e; }
@@ -46,10 +47,10 @@
 
     /* --- 메인 채팅 화면 --- */
     .chat-header { background: #BACEE0; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.06); }
-    .chat-title { font-size: 17px; color: #1e1e1e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+    .chat-title { font-size: 16px; color: #1e1e1e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; flex-shrink: 0; }
     
-    .header-btns { display: flex; gap: 6px; }
-    .header-btn { background: rgba(0,0,0,0.06); border: none; padding: 6px 10px; border-radius: 14px; font-size: 12px; cursor: pointer; color: #1e1e1e; }
+    .header-btns { display: flex; gap: 4px; }
+    .header-btn { background: rgba(0,0,0,0.06); border: none; padding: 6px 7px; border-radius: 14px; font-size: 11px; cursor: pointer; color: #1e1e1e; white-space: nowrap; }
     .header-btn:hover { background: rgba(0,0,0,0.12); }
 
     .room-list-box { display: none; background: white; padding: 12px; margin: 0 10px 10px 10px; border-radius: 12px; max-height: 140px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
@@ -83,6 +84,16 @@
 
     .message-bubble.image-bubble { padding: 4px; background: transparent !important; }
     .message-bubble.image-bubble img { display: block; max-width: 190px; max-height: 260px; border-radius: 12px; cursor: pointer; }
+
+    .message-bubble.pressed { filter: brightness(0.9); transform: scale(0.97); transition: transform 0.1s ease, filter 0.1s ease; }
+
+    #copy-toast {
+      position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px);
+      background: rgba(30,30,30,0.9); color: white; font-size: 13px;
+      padding: 9px 16px; border-radius: 20px; z-index: 600;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    #copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -109,13 +120,21 @@
       <div class="chat-header">
         <div class="chat-title" id="room-title">깨톡 전체방</div>
         <div class="header-btns">
-          <button class="header-btn" onclick="toggleRoomList()">목록</button>
+          <button class="header-btn" onclick="toggleRoomList()">채팅방들</button>
+          <button class="header-btn" onclick="toggleMemberList()">목록</button>
           <button class="header-btn" onclick="inviteFriend()">초대</button>
           <button class="header-btn" onclick="exitChat()">나가기</button>
         </div>
       </div>
 
       <div id="room-list" class="room-list-box"></div>
+      <div id="member-list" class="room-list-box"></div>
+
+      <div id="call-row" style="display:none; justify-content:center; gap:10px; padding:8px 0; background:rgba(255,255,255,0.5);">
+        <button class="header-btn" onclick="startCall('audio')">🎤 음성통화</button>
+        <button class="header-btn" onclick="startCall('video')">🎥 영상통화</button>
+      </div>
+
       <div class="chat-messages" id="chat-box"></div>
 
       <div class="chat-input-box">
@@ -127,9 +146,62 @@
     </div>
   </div>
 
+  <div id="call-modal" style="display:none; position:fixed; inset:0; background:#1a1a1a; z-index:700; flex-direction:column; justify-content:space-between; padding:24px 16px;">
+    <div style="color:white; text-align:center;">
+      <div id="call-peer-name" style="font-size:18px; font-weight:400;"></div>
+      <div id="call-status-text" style="font-size:13px; color:#aaa; margin-top:4px;">연결 중...</div>
+    </div>
+
+    <div id="call-video-grid" style="position:relative; width:100%; flex-grow:1; background:#000; border-radius:16px; overflow:hidden; margin:16px 0;">
+      <video id="remote-video" autoplay playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+      <video id="local-video" autoplay playsinline muted style="position:absolute; bottom:12px; right:12px; width:84px; height:112px; border-radius:10px; border:2px solid white; object-fit:cover; z-index:10;"></video>
+    </div>
+
+    <div id="call-actions-incoming" style="display:none; justify-content:center; gap:20px;">
+      <button onclick="declineCall()" style="background:#e53935; color:white; border:none; padding:13px 26px; border-radius:24px; font-size:14px; cursor:pointer;">거절</button>
+      <button onclick="acceptCall()" style="background:#3AA35C; color:white; border:none; padding:13px 26px; border-radius:24px; font-size:14px; cursor:pointer;">수락</button>
+    </div>
+
+    <div id="call-actions-active" style="display:none; justify-content:center; gap:14px;">
+      <button id="mute-btn" onclick="toggleMute()" style="background:#444; color:white; border:none; padding:12px 18px; border-radius:22px; font-size:13px; cursor:pointer;">🎤 음소거</button>
+      <button id="cam-btn" onclick="toggleCamera()" style="background:#444; color:white; border:none; padding:12px 18px; border-radius:22px; font-size:13px; cursor:pointer;">📷 카메라</button>
+      <button onclick="endCall()" style="background:#e53935; color:white; border:none; padding:12px 24px; border-radius:22px; font-size:13px; cursor:pointer;">종료</button>
+    </div>
+  </div>
+
+  <div id="profile-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:550; align-items:center; justify-content:center; padding:24px;">
+    <div style="background:white; border-radius:18px; width:100%; max-width:300px; padding:24px 20px; text-align:center; position:relative;">
+      <button onclick="closeProfileModal()" style="position:absolute; top:10px; right:12px; background:none; border:none; font-size:18px; color:#999; cursor:pointer;">×</button>
+
+      <div id="profile-pic-wrap" style="width:84px; height:84px; border-radius:50%; margin:0 auto 12px; background:#eee; overflow:hidden; display:flex; align-items:center; justify-content:center; font-size:30px; color:#aaa; position:relative;">
+        <span id="profile-pic-fallback">👤</span>
+        <img id="profile-pic-img" src="" style="display:none; width:100%; height:100%; object-fit:cover;">
+      </div>
+      <input type="file" id="profile-pic-input" accept="image/*" style="display:none" onchange="handleProfilePicSelect(event)">
+      <div id="profile-pic-edit-row" style="display:none; margin-bottom:10px;">
+        <button class="header-btn" onclick="document.getElementById('profile-pic-input').click()">사진 바꾸기</button>
+      </div>
+
+      <div id="profile-name" style="font-size:17px; font-weight:400; margin-bottom:4px;"></div>
+      <div id="profile-status" style="font-size:12px; margin-bottom:14px;"></div>
+
+      <div id="profile-bio-view" style="font-size:13px; color:#444; background:#f6f6f6; border-radius:10px; padding:10px 12px; margin-bottom:12px; min-height:20px; text-align:left;"></div>
+
+      <div id="profile-bio-edit" style="display:none; margin-bottom:12px;">
+        <textarea id="profile-bio-textarea" rows="3" style="width:100%; border:1px solid #ddd; border-radius:10px; padding:8px 10px; font-size:13px; font-family:inherit; resize:none;" placeholder="소개글을 입력하세요"></textarea>
+        <button class="btn-kakao" style="margin-top:8px; padding:9px;" onclick="saveBio()">저장</button>
+      </div>
+
+      <button id="profile-bio-write-btn" class="header-btn" style="display:none;" onclick="startEditBio()">소개글 쓰기</button>
+      <button id="profile-ban-btn" class="header-btn" style="display:none; background:#ffe3e1; color:#c62828; margin-top:8px;" onclick="banUser()">차단 (계정 영구 삭제)</button>
+    </div>
+  </div>
+
   <div id="image-viewer" onclick="closeImageViewer()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:500; align-items:center; justify-content:center; padding:20px;">
     <img id="image-viewer-img" src="" style="max-width:100%; max-height:100%; border-radius:8px;">
   </div>
+
+  <div id="copy-toast">복사되었습니다</div>
 
   <div id="debug-banner" style="display:none; position:fixed; bottom:0; left:0; right:0; max-height:40%; overflow-y:auto; background:#c62828; color:white; font-size:12px; font-family:monospace; padding:10px 12px; z-index:9999; white-space:pre-wrap; word-break:break-all;"></div>
 
@@ -157,8 +229,33 @@
     let currentRoomId = "global"; 
     let isAdmin = false; 
     let chatInterval = null; 
+    let heartbeatInterval = null;
     let myRooms = JSON.parse(localStorage.getItem('mySavedRooms') || "{}");
     let lastMsgId = "";
+    const ONLINE_THRESHOLD_MS = 20000;
+    let currentProfileUser = null;
+
+    // --- 통화(PeerJS/WebRTC) 관련 상태 ---
+    let peer = null;
+    let localStream = null;
+    let currentCall = null;
+    let incomingCall = null;
+    let callPeerName = "";
+    let isMuted = false;
+    let isCamOff = false;
+
+    function peerIdFor(name) {
+      const b64 = btoa(unescape(encodeURIComponent(name))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+      return 'kkaetalk_' + b64;
+    }
+
+    // 문자열(구버전)/객체(신버전) 사용자 레코드를 통일된 객체로 변환
+    function normalizeUser(entry) {
+      if (typeof entry === 'string') {
+        return { password: entry, bio: "", profilePic: "", lastSeen: 0, banned: false };
+      }
+      return Object.assign({ password: "", bio: "", profilePic: "", lastSeen: 0, banned: false }, entry || {});
+    }
 
     // 알림 소리 재생기 (Web Audio API 기반)
     function playNotificationSound() {
@@ -226,10 +323,10 @@
           serverData = { users: {}, messages: [], calls: {} };
         }
 
-        const existingPassword = serverData.users[nameInput];
-        if (existingPassword === undefined) {
+        const existingEntry = serverData.users[nameInput];
+        if (existingEntry === undefined) {
           if (confirm(`'${nameInput}' 이름으로 신규 등록하시겠습니까?`)) {
-            serverData.users[nameInput] = passInput;
+            serverData.users[nameInput] = { password: passInput, bio: "", profilePic: "", lastSeen: Date.now(), banned: false };
             return fetch(REQ_URL, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json', 'X-Master-Key': MASTER_KEY },
@@ -244,7 +341,12 @@
             loginBtn.innerText = "시작하기";
           }
         } else {
-          if (existingPassword === passInput) {
+          const existingUser = normalizeUser(existingEntry);
+          if (existingUser.banned) {
+            alert("차단된 계정입니다.");
+            loginBtn.disabled = false;
+            loginBtn.innerText = "시작하기";
+          } else if (existingUser.password === passInput) {
             enterChatRoom(nameInput);
           } else {
             alert("비밀번호가 올바르지 않습니다.");
@@ -273,7 +375,175 @@
       document.getElementById('screen-chat').classList.add('active');
       renderRoomList();
       loadMessages();
-      chatInterval = setInterval(loadMessages, 2000); 
+      chatInterval = setInterval(loadMessages, 2000);
+
+      updateHeartbeat();
+      heartbeatInterval = setInterval(updateHeartbeat, 15000);
+
+      initPeer();
+    }
+
+    // 통화용 PeerJS 연결 시작 (무료 공용 시그널링 서버 사용)
+    function initPeer() {
+      try {
+        peer = new Peer(peerIdFor(myName));
+      } catch (e) {
+        console.error('Peer init error', e);
+        return;
+      }
+
+      peer.on('error', function(err) {
+        console.error('Peer error', err);
+        if (err.type === 'unavailable-id') {
+          // 이미 다른 탭/기기에서 같은 이름으로 접속 중인 경우: 통화 기능만 비활성
+          console.warn('이미 다른 곳에서 접속 중이라 통화 수신이 안 될 수 있어요.');
+        }
+      });
+
+      peer.on('call', function(call) {
+        if (currentCall || incomingCall) {
+          call.close(); // 이미 통화 중이면 자동 거절
+          return;
+        }
+        incomingCall = call;
+        callPeerName = call.metadata && call.metadata.from ? call.metadata.from : '상대방';
+        document.getElementById('call-peer-name').innerText = callPeerName;
+        document.getElementById('call-status-text').innerText = (call.metadata && call.metadata.type === 'video') ? '영상통화 수신 중...' : '음성통화 수신 중...';
+        document.getElementById('call-actions-incoming').style.display = 'flex';
+        document.getElementById('call-actions-active').style.display = 'none';
+        document.getElementById('call-modal').style.display = 'flex';
+      });
+    }
+
+    function destroyPeer() {
+      if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    }
+
+    // 1:1 채팅방에서 상대방에게 통화 걸기
+    function startCall(type) {
+      if (currentRoomId === 'global') return alert("1:1 채팅방에서만 통화할 수 있어요.");
+      if (currentCall || incomingCall) return alert("이미 통화 중입니다.");
+      if (!peer) return alert("통화 연결이 아직 준비되지 않았어요. 잠시 후 다시 시도해주세요.");
+
+      const friendName = myRooms[currentRoomId];
+      if (!friendName) return;
+
+      const wantsVideo = (type === 'video');
+      navigator.mediaDevices.getUserMedia({ video: wantsVideo, audio: true })
+        .then(stream => {
+          localStream = stream;
+          document.getElementById('local-video').srcObject = stream;
+          document.getElementById('local-video').style.display = wantsVideo ? 'block' : 'none';
+
+          callPeerName = friendName;
+          document.getElementById('call-peer-name').innerText = friendName;
+          document.getElementById('call-status-text').innerText = "연결 중...";
+          document.getElementById('call-actions-incoming').style.display = 'none';
+          document.getElementById('call-actions-active').style.display = 'flex';
+          document.getElementById('call-modal').style.display = 'flex';
+          resetCallButtons();
+
+          const call = peer.call(peerIdFor(friendName), stream, { metadata: { from: myName, type: type } });
+          currentCall = call;
+          wireCallEvents(call, wantsVideo);
+        })
+        .catch(err => {
+          alert("카메라/마이크 권한이 필요합니다.\n원인: " + err.message);
+        });
+    }
+
+    function acceptCall() {
+      if (!incomingCall) return;
+      const wantsVideo = incomingCall.metadata && incomingCall.metadata.type === 'video';
+
+      navigator.mediaDevices.getUserMedia({ video: wantsVideo, audio: true })
+        .then(stream => {
+          localStream = stream;
+          document.getElementById('local-video').srcObject = stream;
+          document.getElementById('local-video').style.display = wantsVideo ? 'block' : 'none';
+
+          incomingCall.answer(stream);
+          currentCall = incomingCall;
+          incomingCall = null;
+
+          document.getElementById('call-status-text').innerText = "연결됨";
+          document.getElementById('call-actions-incoming').style.display = 'none';
+          document.getElementById('call-actions-active').style.display = 'flex';
+          resetCallButtons();
+
+          wireCallEvents(currentCall, wantsVideo);
+        })
+        .catch(err => {
+          alert("카메라/마이크 권한이 필요합니다.\n원인: " + err.message);
+          declineCall();
+        });
+    }
+
+    function wireCallEvents(call, wantsVideo) {
+      call.on('stream', function(remoteStream) {
+        document.getElementById('remote-video').srcObject = remoteStream;
+        document.getElementById('call-status-text').innerText = "연결됨";
+      });
+      call.on('close', endCall);
+      call.on('error', endCall);
+    }
+
+    function declineCall() {
+      if (incomingCall) { try { incomingCall.close(); } catch (e) {} incomingCall = null; }
+      document.getElementById('call-modal').style.display = 'none';
+    }
+
+    function endCall() {
+      if (currentCall) { try { currentCall.close(); } catch (e) {} currentCall = null; }
+      if (incomingCall) { try { incomingCall.close(); } catch (e) {} incomingCall = null; }
+      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+      document.getElementById('remote-video').srcObject = null;
+      document.getElementById('local-video').srcObject = null;
+      document.getElementById('call-modal').style.display = 'none';
+    }
+
+    function resetCallButtons() {
+      isMuted = false;
+      isCamOff = false;
+      document.getElementById('mute-btn').innerText = "🎤 음소거";
+      document.getElementById('cam-btn').innerText = "📷 카메라";
+    }
+
+    function toggleMute() {
+      if (!localStream) return;
+      isMuted = !isMuted;
+      localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+      document.getElementById('mute-btn').innerText = isMuted ? "🔇 음소거됨" : "🎤 음소거";
+    }
+
+    function toggleCamera() {
+      if (!localStream || localStream.getVideoTracks().length === 0) return;
+      isCamOff = !isCamOff;
+      localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
+      document.getElementById('cam-btn').innerText = isCamOff ? "📷 꺼짐" : "📷 카메라";
+    }
+
+    // 접속 중임을 서버에 주기적으로 기록 (온라인/오프라인 판단용) + 구버전 사용자 데이터 자동 변환
+    function updateHeartbeat() {
+      fetch(`${REQ_URL}/latest`, {
+        method: 'GET',
+        headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        let serverData = data || {};
+        if (!serverData.users) serverData.users = {};
+        const me = normalizeUser(serverData.users[myName]);
+        me.lastSeen = Date.now();
+        serverData.users[myName] = me;
+
+        return fetch(REQ_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Master-Key': MASTER_KEY },
+          body: JSON.stringify(serverData)
+        });
+      })
+      .catch(err => console.error('heartbeat error', err));
     }
 
     function inviteFriend() {
@@ -297,12 +567,59 @@
       currentRoomId = roomId;
       document.getElementById('room-title').innerText = (roomId === 'global') ? "깨톡 전체방" : friendName;
       document.getElementById('room-list').style.display = 'none';
+      document.getElementById('call-row').style.display = (roomId === 'global') ? 'none' : 'flex';
       loadMessages();
     }
 
     function toggleRoomList() {
+      document.getElementById('member-list').style.display = 'none';
       const listDiv = document.getElementById('room-list');
       listDiv.style.display = (listDiv.style.display === 'block') ? 'none' : 'block';
+    }
+
+    function toggleMemberList() {
+      document.getElementById('room-list').style.display = 'none';
+      const listDiv = document.getElementById('member-list');
+      const willOpen = listDiv.style.display !== 'block';
+      listDiv.style.display = willOpen ? 'block' : 'none';
+      if (willOpen) renderMemberList();
+    }
+
+    function renderMemberList() {
+      const listDiv = document.getElementById('member-list');
+      listDiv.innerHTML = `<div class="room-item" style="cursor:default; color:#999;">불러오는 중...</div>`;
+
+      fetch(`${REQ_URL}/latest`, {
+        method: 'GET',
+        headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        const users = (data && data.users) ? data.users : {};
+        const names = Object.keys(users);
+        if (names.length === 0) {
+          listDiv.innerHTML = `<div class="room-item" style="cursor:default; color:#999;">가입된 회원이 없습니다.</div>`;
+          return;
+        }
+        let html = "";
+        names.forEach(name => {
+          const u = normalizeUser(users[name]);
+          const online = (Date.now() - u.lastSeen) < ONLINE_THRESHOLD_MS;
+          html += `
+            <div class="room-item" onclick="openProfileModal('${name}')">
+              <span>
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${online ? '#3AA35C' : '#bbb'};"></span>
+                ${name}${name === myName ? ' (나)' : ''}
+              </span>
+              <span style="font-size:11px; color:${online ? '#3AA35C' : '#999'};">${online ? '온라인' : '오프라인'}</span>
+            </div>`;
+        });
+        listDiv.innerHTML = html;
+      })
+      .catch(err => {
+        listDiv.innerHTML = `<div class="room-item" style="cursor:default; color:#c62828;">목록을 불러오지 못했습니다.</div>`;
+        console.error(err);
+      });
     }
 
     function renderRoomList() {
@@ -314,8 +631,190 @@
       listDiv.innerHTML = html;
     }
 
+    function openProfileModal(name) {
+      currentProfileUser = name;
+      document.getElementById('profile-modal').style.display = 'flex';
+      document.getElementById('profile-bio-edit').style.display = 'none';
+      document.getElementById('profile-name').innerText = "불러오는 중...";
+      document.getElementById('profile-status').innerText = "";
+      document.getElementById('profile-bio-view').innerText = "";
+      document.getElementById('profile-pic-img').style.display = 'none';
+      document.getElementById('profile-pic-fallback').style.display = 'block';
+      document.getElementById('profile-pic-edit-row').style.display = 'none';
+      document.getElementById('profile-bio-write-btn').style.display = 'none';
+      document.getElementById('profile-ban-btn').style.display = 'none';
+
+      fetch(`${REQ_URL}/latest`, {
+        method: 'GET',
+        headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        const users = (data && data.users) ? data.users : {};
+        const u = normalizeUser(users[name]);
+        const online = (Date.now() - u.lastSeen) < ONLINE_THRESHOLD_MS;
+        const isSelf = (name === myName);
+
+        document.getElementById('profile-name').innerText = name + (isSelf ? ' (나)' : '');
+        document.getElementById('profile-status').innerHTML =
+          `<span style="color:${online ? '#3AA35C' : '#999'};">${online ? '● 온라인' : '○ 오프라인'}</span>`;
+        document.getElementById('profile-bio-view').innerText = u.bio && u.bio.trim() ? u.bio : "소개글이 없습니다.";
+
+        if (u.profilePic) {
+          document.getElementById('profile-pic-img').src = u.profilePic;
+          document.getElementById('profile-pic-img').style.display = 'block';
+          document.getElementById('profile-pic-fallback').style.display = 'none';
+        }
+
+        if (isSelf) {
+          document.getElementById('profile-pic-edit-row').style.display = 'block';
+          document.getElementById('profile-bio-write-btn').style.display = 'inline-block';
+        }
+        if (isAdmin && !isSelf) {
+          document.getElementById('profile-ban-btn').style.display = 'block';
+        }
+      })
+      .catch(err => {
+        document.getElementById('profile-name').innerText = name;
+        document.getElementById('profile-status').innerText = "불러오기 실패";
+        console.error(err);
+      });
+    }
+
+    function closeProfileModal() {
+      document.getElementById('profile-modal').style.display = 'none';
+      currentProfileUser = null;
+    }
+
+    function startEditBio() {
+      const current = document.getElementById('profile-bio-view').innerText;
+      document.getElementById('profile-bio-textarea').value = (current === "소개글이 없습니다.") ? "" : current;
+      document.getElementById('profile-bio-edit').style.display = 'block';
+    }
+
+    function saveBio() {
+      const text = document.getElementById('profile-bio-textarea').value.trim();
+      fetch(`${REQ_URL}/latest`, {
+        method: 'GET',
+        headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        let serverData = data || {};
+        if (!serverData.users) serverData.users = {};
+        const me = normalizeUser(serverData.users[myName]);
+        me.bio = text;
+        serverData.users[myName] = me;
+        return fetch(REQ_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Master-Key': MASTER_KEY },
+          body: JSON.stringify(serverData)
+        });
+      })
+      .then(res => {
+        if (!res.ok) throw new Error(`저장 실패 (status ${res.status})`);
+        document.getElementById('profile-bio-edit').style.display = 'none';
+        openProfileModal(myName);
+      })
+      .catch(err => {
+        alert("소개글 저장에 실패했습니다.\n원인: " + err.message);
+        console.error(err);
+      });
+    }
+
+    // 프로필 사진 선택: 리사이즈 + 압축 (프로필은 계속 보관되므로 용량을 더 작게)
+    function handleProfilePicSelect(event) {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const MAX_DIM = 160;
+          let w = img.width, h = img.height;
+          if (w > h && w > MAX_DIM) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
+          else if (h >= w && h > MAX_DIM) { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+
+          fetch(`${REQ_URL}/latest`, {
+            method: 'GET',
+            headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+          })
+          .then(res => res.json())
+          .then(data => {
+            let serverData = data || {};
+            if (!serverData.users) serverData.users = {};
+            const me = normalizeUser(serverData.users[myName]);
+            me.profilePic = dataUrl;
+            serverData.users[myName] = me;
+            serverData = enforceSizeLimit(serverData);
+            return fetch(REQ_URL, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', 'X-Master-Key': MASTER_KEY },
+              body: JSON.stringify(serverData)
+            });
+          })
+          .then(res => {
+            if (!res.ok) throw new Error(`저장 실패 (status ${res.status})`);
+            openProfileModal(myName);
+          })
+          .catch(err => {
+            alert("프로필 사진 저장에 실패했습니다.\n원인: " + err.message);
+            console.error(err);
+          });
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // 마스터 전용: 회원 계정과 작성한 메시지를 전부 영구 삭제
+    function banUser() {
+      if (!isAdmin || !currentProfileUser) return;
+      const target = currentProfileUser;
+      if (!confirm(`'${target}' 계정을 영구 삭제하고 모든 기록을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+
+      fetch(`${REQ_URL}/latest`, {
+        method: 'GET',
+        headers: { 'X-Master-Key': MASTER_KEY, 'X-Bin-Meta': 'false' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        let serverData = data || {};
+        if (serverData.users) delete serverData.users[target];
+        if (serverData.messages) serverData.messages = serverData.messages.filter(m => m.sender !== target);
+
+        return fetch(REQ_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Master-Key': MASTER_KEY },
+          body: JSON.stringify(serverData)
+        });
+      })
+      .then(res => {
+        if (!res.ok) throw new Error(`삭제 실패 (status ${res.status})`);
+        alert(`'${target}' 계정이 삭제되었습니다.`);
+        closeProfileModal();
+        renderMemberList();
+        loadMessages();
+      })
+      .catch(err => {
+        alert("차단 처리에 실패했습니다.\n원인: " + err.message);
+        console.error(err);
+      });
+    }
+
     function exitChat() {
       clearInterval(chatInterval);
+      clearInterval(heartbeatInterval);
+      endCall();
+      destroyPeer();
       currentRoomId = "global";
       document.getElementById('room-title').innerText = "깨톡 전체방";
       document.getElementById('screen-chat').classList.remove('active');
@@ -508,6 +1007,80 @@
       document.getElementById('image-viewer').style.display = 'none';
     }
 
+    // 말풍선 길게 누르면 복사 (네이티브 길게 누르기 메뉴가 잘 안 뜨는 환경 대응)
+    let pressTimer = null;
+    let pressStartPos = null;
+    let pressedEl = null;
+    const LONG_PRESS_MS = 450;
+    const MOVE_CANCEL_PX = 10;
+
+    function showCopyToast() {
+      const toast = document.getElementById('copy-toast');
+      toast.classList.add('show');
+      clearTimeout(showCopyToast._t);
+      showCopyToast._t = setTimeout(() => toast.classList.remove('show'), 1400);
+    }
+
+    function copyBubbleText(bubbleEl) {
+      const msgId = bubbleEl.getAttribute('data-msg-id');
+      const msg = globalMessages.find(m => m.id === msgId);
+      if (!msg) return;
+      const text = msg.message;
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showCopyToast).catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+    }
+
+    function fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); showCopyToast(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+
+    function clearPressState() {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+      pressStartPos = null;
+      if (pressedEl) { pressedEl.classList.remove('pressed'); pressedEl = null; }
+    }
+
+    const chatBoxEl = document.getElementById('chat-box');
+
+    chatBoxEl.addEventListener('pointerdown', function(e) {
+      const bubble = e.target.closest('.message-bubble[data-msg-id]');
+      if (!bubble) return;
+      pressStartPos = { x: e.clientX, y: e.clientY };
+      pressedEl = bubble;
+      bubble.classList.add('pressed');
+      pressTimer = setTimeout(() => {
+        if (pressedEl) {
+          copyBubbleText(pressedEl);
+          if ('vibrate' in navigator) navigator.vibrate(15);
+        }
+        clearPressState();
+      }, LONG_PRESS_MS);
+    });
+
+    chatBoxEl.addEventListener('pointermove', function(e) {
+      if (!pressStartPos) return;
+      const dx = Math.abs(e.clientX - pressStartPos.x);
+      const dy = Math.abs(e.clientY - pressStartPos.y);
+      if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearPressState();
+    });
+
+    chatBoxEl.addEventListener('pointerup', clearPressState);
+    chatBoxEl.addEventListener('pointercancel', clearPressState);
+    chatBoxEl.addEventListener('pointerleave', clearPressState);
+
     function updateMessagesView() {
       const box = document.getElementById('chat-box');
       const isAtBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 50;
@@ -540,7 +1113,7 @@
         wrapper.innerHTML = `
           ${!isMyMessage ? `<div class="message-sender">${msg.sender}</div>` : ''}
           <div class="bubble-row">
-            <div class="message-bubble${isImage ? ' image-bubble' : ''}">
+            <div class="message-bubble${isImage ? ' image-bubble' : ''}" ${!isImage && !isExpiredImage ? `data-msg-id="${msg.id}"` : ''}>
               ${deleteBtnHTML}
               ${bodyHTML}
             </div>
