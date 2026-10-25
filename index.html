@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer crossorigin="anonymous" onerror="(window.showDebugError||function(m){alert(m)})('OneSignal SDK 파일을 불러오지 못했습니다 (네트워크 차단 가능성)')"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Jua', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
     body { background-color: #e5e5e5; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #1e1e1e; }
@@ -230,8 +230,9 @@
     OneSignalDeferred.push(async function(OneSignal) {
       try {
         await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+        if (typeof showToastMsg === 'function') showToastMsg('알림 시스템 준비됨');
       } catch (e) {
-        if (typeof showDebugError === 'function') showDebugError('OneSignal init 오류: ' + (e && e.message ? e.message : e));
+        if (typeof showDebugError === 'function') showDebugError('OneSignal init 오류: ' + (e && e.message ? e.message : JSON.stringify(e)));
         console.error('OneSignal init 오류', e);
       }
     });
@@ -243,7 +244,11 @@
           if (OneSignal.Notifications.permission !== true) {
             await OneSignal.Notifications.requestPermission();
           }
+          if (typeof showToastMsg === 'function') {
+            showToastMsg(OneSignal.Notifications.permission === true ? '알림 허용됨' : '알림 허용 안 됨');
+          }
         } catch (e) {
+          if (typeof showDebugError === 'function') showDebugError('OneSignal 사용자 등록 오류: ' + (e && e.message ? e.message : JSON.stringify(e)));
           console.error('OneSignal 초기화 오류', e);
         }
       });
@@ -1070,10 +1075,15 @@
     const MOVE_CANCEL_PX = 10;
 
     function showCopyToast() {
+      showToastMsg('복사되었습니다');
+    }
+
+    function showToastMsg(text) {
       const toast = document.getElementById('copy-toast');
+      toast.textContent = text;
       toast.classList.add('show');
-      clearTimeout(showCopyToast._t);
-      showCopyToast._t = setTimeout(() => toast.classList.remove('show'), 1400);
+      clearTimeout(showToastMsg._t);
+      showToastMsg._t = setTimeout(() => toast.classList.remove('show'), 1800);
     }
 
     function copyBubbleText(bubbleEl) {
