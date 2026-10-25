@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Jua', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
     body { background-color: #e5e5e5; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #1e1e1e; }
@@ -221,6 +222,47 @@
   </script>
 
   <script>
+    // --- OneSignal (폰 푸시 알림) ---
+    const ONESIGNAL_APP_ID = "44d2be03-c883-4ff4-92bc-a77c0d8648c4";
+    const ONESIGNAL_REST_API_KEY = "os_v2_app_itjl4a6iqnh7jev4u56a3bsiyrctaq7j3paudx5ucsmvaw6z7mobq4dtps2dhhkxvaabrrj5j7ygue6o5sb452j5puhnmp3qvabgeey";
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal) {
+      await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+    });
+
+    function initOneSignalForUser(name) {
+      OneSignalDeferred.push(async function(OneSignal) {
+        try {
+          await OneSignal.login(name); // 외부 ID로 등록해서, 이 이름으로 콕 집어 알림을 보낼 수 있게 함
+          if (OneSignal.Notifications.permission !== true) {
+            await OneSignal.Notifications.requestPermission();
+          }
+        } catch (e) {
+          console.error('OneSignal 초기화 오류', e);
+        }
+      });
+    }
+
+    // targetName 한 명에게 푸시 알림 전송
+    function sendPushNotification(targetName, title, body) {
+      if (!ONESIGNAL_REST_API_KEY || ONESIGNAL_REST_API_KEY.indexOf('여기에') === 0) return; // 키 미설정 시 조용히 무시
+
+      fetch('https://onesignal.com/api/v1/notifications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': 'Key ' + ONESIGNAL_REST_API_KEY
+        },
+        body: JSON.stringify({
+          app_id: ONESIGNAL_APP_ID,
+          include_external_user_ids: [targetName],
+          headings: { en: title },
+          contents: { en: body }
+        })
+      }).catch(err => console.error('푸시 전송 실패', err));
+    }
+
     const BIN_ID = "6a59cb72da38895dfe697ea3"; 
     const REQ_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
     const MASTER_KEY = "$2a$10$E8oNzfyairv9Nabgp8QfwOfeKmK2VnVBNKuH.yUu0M9MQj6xkv5Iy"; 
@@ -381,6 +423,7 @@
       heartbeatInterval = setInterval(updateHeartbeat, 15000);
 
       initPeer();
+      initOneSignalForUser(myName);
     }
 
     // 통화용 PeerJS 연결 시작 (무료 공용 시그널링 서버 사용)
@@ -922,6 +965,13 @@
       .then(res => {
         if (!res.ok) throw new Error(`전송 실패 (status ${res.status})`);
         loadMessages();
+
+        if (currentRoomId !== 'global') {
+          const friendName = myRooms[currentRoomId];
+          if (friendName) {
+            sendPushNotification(friendName, myName, type === 'image' ? '사진을 보냈습니다.' : content);
+          }
+        }
       })
       .catch(err => {
         console.error(err);
