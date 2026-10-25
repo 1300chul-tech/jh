@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer crossorigin="anonymous"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Jua', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
     body { background-color: #e5e5e5; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #1e1e1e; }
@@ -228,7 +228,12 @@
 
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     OneSignalDeferred.push(async function(OneSignal) {
-      await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+      try {
+        await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+      } catch (e) {
+        if (typeof showDebugError === 'function') showDebugError('OneSignal init 오류: ' + (e && e.message ? e.message : e));
+        console.error('OneSignal init 오류', e);
+      }
     });
 
     function initOneSignalForUser(name) {
