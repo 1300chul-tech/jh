@@ -54,7 +54,7 @@
     .header-btn { background: rgba(0,0,0,0.06); border: none; padding: 6px 7px; border-radius: 14px; font-size: 11px; cursor: pointer; color: #1e1e1e; white-space: nowrap; }
     .header-btn:hover { background: rgba(0,0,0,0.12); }
 
-    .room-list-box { display: none; background: white; padding: 12px; margin: 0 10px 10px 10px; border-radius: 12px; max-height: 140px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .room-list-box { display: none; background: white; padding: 12px; margin: 0 10px 10px 10px; border-radius: 12px; max-height: 60vh; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     .room-item { padding: 8px 10px; border-radius: 8px; margin-bottom: 4px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; }
     .room-item:hover { background: #FEE500; }
 
@@ -370,10 +370,9 @@
         return res.json();
       })
       .then(data => {
-        let serverData = data || {};
-        if (Array.isArray(serverData) || !serverData.users) {
-          serverData = { users: {}, messages: [], calls: {} };
-        }
+        let serverData = (data && !Array.isArray(data)) ? data : {};
+        if (!serverData.users) serverData.users = {};
+        if (!serverData.messages) serverData.messages = [];
 
         const existingEntry = serverData.users[nameInput];
         if (existingEntry === undefined) {
